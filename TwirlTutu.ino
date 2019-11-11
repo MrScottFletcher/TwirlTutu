@@ -270,8 +270,17 @@ void mirrorStreamWithHueControl() {
 	//split and mirror off of origin
 	//origin is the 'startng' LED in a 365 degree ring
 
+	if (LEDPosition > NUM_LEDS)
+		LEDPosition = 0;
 	
-	int diff = originLED - LEDPosition;
+	int diff = 0;
+	if (LEDPosition < originLED) {
+		diff = (NUM_LEDS - originLED) + LEDPosition;
+	}
+	else {
+		diff = originLED - LEDPosition;
+	}
+
 
 	//int diff = (originLED + NUM_LEDS - LEDPosition) % (NUM_LEDS);
 	//offest of origin of current LED
