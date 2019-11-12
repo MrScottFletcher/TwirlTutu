@@ -30,7 +30,7 @@ Neopixel chipset: ws2812B  (144 LED/m strip)
 #include <Adafruit_LSM303_U.h>
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
-
+#include <math.h> 
 
 //This project needs the FastLED library - link in the description.
 #include "FastLED.h"
@@ -69,7 +69,15 @@ int effect = 0;             // effect:      is used to differentiate and select 
 int sparkTest = 0;          // sparkTest:   variable used in the "sparkle" LED animation sequence 
 boolean constSpeed = false; // constSpeed:  toggle between constant and variable speed.
 
-Adafruit_LSM303 lsm;
+int16_t accelleration_strength = 0;
+int16_t accelleration_vector = 0;
+int16_t accelleration_vectorRotationOffset = 0;
+int accelleration_ModeSwitchThreshold = 100000;
+const int ACCELL_SAMPLE_COUNT = 1000;
+const int ACCELL_UPDATE_EVERY = 100;
+
+Adafruit_LSM303_Accel_Unified accel = Adafruit_LSM303_Accel_Unified(54321);
+//Adafruit_LSM303 lsm;
 
 //hard coded for now
 int originLED = 10;
@@ -78,15 +86,16 @@ int originLED = 10;
 // setup() : Is used to initialise the LED strip
 //===================================================================================================================================================
 void setup() {
-	delay(2000);          //Delay for two seconds to power the LEDS before starting the data signal on the Arduino
+	delay(5000);          //Delay for two seconds to power the LEDS before starting the data signal on the Arduino
+	
 	FastLED.addLeds<WS2812B, DATA_PIN, GRB>(leds, NUM_LEDS);                            //initialise the LED strip       
 
 	LEDPosition = originLED;
 
-	//Serial.begin(115200);
+
 
 	// Try to initialise and warn if we couldn't detect the chip
-	if (!lsm.begin())
+	if (!accel.begin())
 	{
 		Serial.println("Oops ... unable to initialize the LSM303. Check your wiring!");
 		while (1);
@@ -103,8 +112,7 @@ void loop() {
 	//constrainLEDs();
 	LoopLEDs();
 	
-	lsm.read();
-
+	computeVector();
 	mirrorStreamWithHueControl();
 
 	//int x = lsm.accelData.x;
@@ -119,8 +127,6 @@ void loop() {
 	////Serial.print("Y: "); Serial.print((int)lsm.magData.y);         Serial.print(" ");
 	////Serial.print("Z: "); Serial.println((int)lsm.magData.z);       Serial.print(" ");
 	//Serial.println("");
-
-
 
 	//switch (effect) {
 	//case 0:                                               // 1st effect : Cylon with Hue control - using Potentiometer 
@@ -145,6 +151,69 @@ void loop() {
 	//}
 }
 
+void computeVector() {
+
+
+	//Serial.print("Accel X: "); Serial.print((int)lsm.accelData.x); Serial.print(" ");
+	//Serial.print("Y: "); Serial.print((int)lsm.accelData.y);       Serial.print(" ");
+	//Serial.print("Z: "); Serial.println((int)lsm.accelData.z);     Serial.print(" ");
+
+	sensors_event_t event;
+	accel.getEvent(&event);
+
+
+	static double accelHistory_X[ACCELL_SAMPLE_COUNT];
+	static double accelHistory_Y[ACCELL_SAMPLE_COUNT];
+	static double accelHistory_Z[ACCELL_SAMPLE_COUNT];
+	static int16_t sampleLoopNumber = 0;
+
+	double this_X = 0;
+	double this_Y = 0;
+	double this_Z = 0;
+
+	accelHistory_X[sampleLoopNumber] = event.acceleration.x;
+	accelHistory_Y[sampleLoopNumber] = event.acceleration.y;
+	accelHistory_Z[sampleLoopNumber] = event.acceleration.z;
+
+	this_X = accelHistory_X[sampleLoopNumber];
+	this_Y = accelHistory_Y[sampleLoopNumber];
+	this_Z = accelHistory_Z[sampleLoopNumber];
+
+	int16_t avg_X = 0;
+	int16_t avg_Y = 0;
+	int16_t avg_Z = 0;
+
+	for (size_t i = 0; i < ACCELL_SAMPLE_COUNT; i++)
+	{
+		if (i != sampleLoopNumber) {
+			avg_X += accelHistory_X[i];
+			avg_Y += accelHistory_Y[i];
+			avg_Z += accelHistory_Z[i];
+		}
+	}
+
+	//don't count the current one
+	avg_X = avg_X / (ACCELL_SAMPLE_COUNT - 1);
+	avg_Y = avg_Y / (ACCELL_SAMPLE_COUNT - 1);
+	avg_Z = avg_Z / (ACCELL_SAMPLE_COUNT - 1);
+
+	if (this_X != 0 && abs(this_X) > abs(avg_X) || abs(this_Y) > abs(avg_Y))
+	{
+		//kick it
+		//THIS CALL CRASHES THE FLORA!!!!!
+		//double rad = atan2(this_Y * 100, this_X * 100);
+
+		//double deg = rad * (180 / PI);
+
+		//360 desgrees with 80 LEDs is 2.25 degrees per LED
+		//originLED = abs(deg) / 2.25;
+
+		//set the 'energy' here, too.
+	}
+
+	////Be sure to loop the counter around to zero again...
+	sampleLoopNumber = (sampleLoopNumber + 1) % ACCELL_SAMPLE_COUNT;
+}
 
 //===================================================================================================================================================
 // readPotentiometer() : Take a potentiometer reading. This value will be used to control various LED animations, and to choose the animation sequence to display.
