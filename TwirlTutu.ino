@@ -72,7 +72,7 @@ boolean constSpeed = false; // constSpeed:  toggle between constant and variable
 Adafruit_LSM303 lsm;
 
 //hard coded for now
-int originLED = 60;
+int originLED = 10;
 
 //===================================================================================================================================================
 // setup() : Is used to initialise the LED strip
@@ -275,12 +275,12 @@ void mirrorStreamWithHueControl() {
 	
 	int diff = 0;
 	if (LEDPosition < originLED) {
-		diff = (NUM_LEDS - originLED) + LEDPosition;
+		//maintain our 'positive or negative' orientation to origin when we loop around
+		diff = (NUM_LEDS - originLED + LEDPosition) * -1;
 	}
 	else {
-		diff = originLED - LEDPosition;
+		diff = (originLED - LEDPosition);
 	}
-
 
 	//int diff = (originLED + NUM_LEDS - LEDPosition) % (NUM_LEDS);
 	//offest of origin of current LED
@@ -295,6 +295,18 @@ void mirrorStreamWithHueControl() {
 	}
 	else {
 		mirrorLED = (originLED + diff + NUM_LEDS) % (NUM_LEDS);
+
+		//The long way to do it - might actually be faster, but not as cool maybe.
+		//mirrorLED = originLED + diff;
+		//if (mirrorLED > NUM_LEDS) {
+		//	//loop around
+		//	mirrorLED = mirrorLED - NUM_LEDS;
+		//}
+		//else if (mirrorLED < 0) {
+		//	//loop around - add the negative to SUBTRACT it.  Math.
+		//	mirrorLED = NUM_LEDS + mirrorLED;
+		//}
+
 		//as the leds approach the tail, dim them out
 		if (diff < 0) diff = diff * -1;
 		if (diff != 0)
