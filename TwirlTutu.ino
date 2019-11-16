@@ -31,6 +31,7 @@ Neopixel chipset: ws2812B  (144 LED/m strip)
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <math.h> 
+#include <Adafruit_NeoPixel.h>
 
 //This project needs the FastLED library - link in the description.
 #include "FastLED.h"
@@ -38,10 +39,14 @@ Neopixel chipset: ws2812B  (144 LED/m strip)
 //The total number of LEDs being used is 144
 //#define NUM_LEDS 144
 //#define NUM_LEDS 24
-#define NUM_LEDS 80
+#define NUM_LEDS 74
 
 // The data pin for the NeoPixel strip is connected to digital Pin 6 on the Arduino
 #define DATA_PIN 6
+
+// The internal data pin for the single NeoPixel is connected to digital Pin 8 on the Flora
+#define NEOPIXELPIN 8
+
 
 //Initialise the LED array, the LED Hue (ledh) array, and the LED Brightness (ledb) array.
 CRGB leds[NUM_LEDS];
@@ -54,52 +59,75 @@ const int yPin = A4;        // Y pin on accelerometer is connected to Arduino's 
 							// The accelerometer's X Pin and the Z Pin were not used in this sketch
 
 //Global Variables ---------------------------------------------------------------------------------
-byte potVal;                // potVal:      stores the potentiometer signal value
-byte prevPotVal = 0;          // prevPotVal:  stores the previous potentiometer value
+byte g_hueVal;                // g_hueVal:      stores the potentiometer signal value
+byte preHueVal = 0;          // preHueVal:  stores the previous potentiometer value
 int LEDSpeed = 1;             // LEDSpeed:    stores the "speed" of the LED animation sequence
 int maxLEDSpeed = 50;       // maxLEDSpeed: identifies the maximum speed of the LED animation sequence
 int LEDAccel = 0;             // LEDAccel:    stores the acceleration value of the LED animation sequence (to speed it up or slow it down)
 int LEDPosition = 30;         // LEDPosition: identifies the LED within the strip to modify (leading LED). The number will be between 0-143.  (Zero to NUM_LEDS-1)
 int oldPos = 0;               // oldPos:      holds the previous position of the leading LED
-byte hue = 0;               // hue:         stores the leading LED's hue value
-byte intensity = 150;       // intensity:   the default brightness of the leading LED
+byte g_hue = 0;               // g_hue:         stores the leading LED's g_hue value
+byte g_streamIntensity = 255;       // g_streamIntensity:   the default brightness of the leading LED
 byte bright = 80;           // bright:      this variable is used to modify the brightness of the trailing LEDs
 int animationDelay = 0;     // animationDelay: is used in the animation Speed calculation. The greater the animationDelay, the slower the LED sequence.
 int effect = 0;             // effect:      is used to differentiate and select one out of the four effects
 int sparkTest = 0;          // sparkTest:   variable used in the "sparkle" LED animation sequence 
 boolean constSpeed = false; // constSpeed:  toggle between constant and variable speed.
 
+int g_proposedOriginLED = 30;
+uint8_t rainbowBrightness = 120;
+CRGBPalette16 currentPalette;
+TBlendType    currentBlending;
+
+int g_energyFactor = 50;
+
 int16_t accelleration_strength = 0;
 int16_t accelleration_vector = 0;
 int16_t accelleration_vectorRotationOffset = 0;
 int accelleration_ModeSwitchThreshold = 100000;
-const int ACCELL_SAMPLE_COUNT = 1000;
-const int ACCELL_UPDATE_EVERY = 100;
+const int ACCELL_SAMPLE_COUNT = 50;
+//const int ACCELL_UPDATE_EVERY = 100;
 
 Adafruit_LSM303_Accel_Unified accel = Adafruit_LSM303_Accel_Unified(54321);
-//Adafruit_LSM303 lsm;
+
+Adafruit_NeoPixel dot = Adafruit_NeoPixel(1, NEOPIXELPIN, NEO_GRB + NEO_KHZ800);
+
 
 //hard coded for now
-int originLED = 10;
+static int originLED = 10;
 
 //===================================================================================================================================================
-// setup() : Is used to initialise the LED strip
+// setup()
 //===================================================================================================================================================
 void setup() {
-	delay(5000);          //Delay for two seconds to power the LEDS before starting the data signal on the Arduino
-	
-	FastLED.addLeds<WS2812B, DATA_PIN, GRB>(leds, NUM_LEDS);                            //initialise the LED strip       
+  //=============================================
+  //LEAVE THIS HERE FOR BOOTUP TESTING!!!
+	delay(2000);          //Delay for two seconds to power the LEDS before starting the data signal on the Arduino
+	dot.begin();
+	dot.setBrightness(50);
+	dot.show(); // Initialize all pixels to 'off'
 
+	colorWipeDot(dot.Color(255, 0, 0), 500); // Red
+	colorWipeDot(dot.Color(0, 255, 0), 500); // Green
+	colorWipeDot(dot.Color(0, 0, 255), 500); // Blue
+	rainbowCycleDot(2);
+//=============================================
+
+	FastLED.addLeds<WS2812B, DATA_PIN, GRB>(leds, NUM_LEDS);                            //initialise the LED strip       
 	LEDPosition = originLED;
 
-
-
+	colorWipeDot(dot.Color(255, 0, 0), 500); // Red
+	Serial.begin(9600);
+	colorWipeDot(dot.Color(0, 255, 0), 500); // Green
 	// Try to initialise and warn if we couldn't detect the chip
 	if (!accel.begin())
 	{
 		Serial.println("Oops ... unable to initialize the LSM303. Check your wiring!");
 		while (1);
 	}
+	colorWipeDot(dot.Color(0, 0, 255), 500); // Blue
+	//dot.setBrightness(0);
+	//dot.show(); // Initialize all pixels to 'off'
 }
 
 
@@ -107,134 +135,204 @@ void setup() {
 // loop() : The Arduino will take readings from the potentiometer and accelerometer to control the LED strip
 //===================================================================================================================================================
 void loop() {
-	readPotentiometer();
 	adjustSpeed();
 	//constrainLEDs();
 	LoopLEDs();
-	
 	computeVector();
-	mirrorStreamWithHueControl();
-
-	//int x = lsm.accelData.x;
-	//int y = lsm.accelData.y;
-	//int z = lsm.accelData.z;
-
-
-	//Serial.print("Accel X: "); Serial.print((int)lsm.accelData.x); Serial.print(" ");
-	//Serial.print("Y: "); Serial.print((int)lsm.accelData.y);       Serial.print(" ");
-	//Serial.print("Z: "); Serial.println((int)lsm.accelData.z);     Serial.print(" ");
-	////Serial.print("Mag X: "); Serial.print((int)lsm.magData.x);     Serial.print(" ");
-	////Serial.print("Y: "); Serial.print((int)lsm.magData.y);         Serial.print(" ");
-	////Serial.print("Z: "); Serial.println((int)lsm.magData.z);       Serial.print(" ");
-	//Serial.println("");
-
-	//switch (effect) {
-	//case 0:                                               // 1st effect : Cylon with Hue control - using Potentiometer 
-	//	cylonWithHueControl();
-	//	break;
-
-	//case 1:                                               // 2nd effect : Cylon with Brightness control - using Potentiometer
-	//	cylonWithBrightnessControl();
-	//	break;
-
-	//case 2:                                               // 3rd effect : Comet effect. Hue controlled by potentiometer, direction by accelerometer
-	//	cometEffect();
-	//	break;
-
-	//case 3:                                               // 4th effect : FireStarter / Rainbow Sparkle effect. Direction controlled by accelerometer, sparkle by potentiometer.
-	//	fireStarter();
-	//	break;
-
-	//case 4:
-	//	levelSense();                                        // 5th effect : LevelSense - uses the accelerometer to create a digital "spirit" level.
-	//	break;
-	//}
 }
 
 void computeVector() {
 
+	UpdateMotionStats();
+	SetOriginAndMode(g_proposedOriginLED, g_energyFactor);
+}
 
-	//Serial.print("Accel X: "); Serial.print((int)lsm.accelData.x); Serial.print(" ");
-	//Serial.print("Y: "); Serial.print((int)lsm.accelData.y);       Serial.print(" ");
-	//Serial.print("Z: "); Serial.println((int)lsm.accelData.z);     Serial.print(" ");
+void UpdateMotionStats() {
+
+	static int16_t sampleLoopNumber = 0;
 
 	sensors_event_t event;
 	accel.getEvent(&event);
 
+	static float accelHistory_ForwardBack[ACCELL_SAMPLE_COUNT];
+	static float accelHistory_UpDown[ACCELL_SAMPLE_COUNT];
+	static float accelHistory_LeftRight[ACCELL_SAMPLE_COUNT];
 
-	static double accelHistory_X[ACCELL_SAMPLE_COUNT];
-	static double accelHistory_Y[ACCELL_SAMPLE_COUNT];
-	static double accelHistory_Z[ACCELL_SAMPLE_COUNT];
-	static int16_t sampleLoopNumber = 0;
+	dot.setBrightness(25);
+	switch (sampleLoopNumber % 3)
+	{
+	case 0:
+		colorWipeDot(dot.Color(255, 0, 0), 1); // Red
+		break;
+	case 1:
+		colorWipeDot(dot.Color(0, 255, 0), 1); // Green
+		break;
+	case 2:
+		colorWipeDot(dot.Color(0, 0, 255), 1); // Blue
+		break;
+	}
 
-	double this_X = 0;
-	double this_Y = 0;
-	double this_Z = 0;
+	float this_ForwardBack = 0;
+	float this_UpDown = 0;
+	float this_LeftRight = 0;
 
-	accelHistory_X[sampleLoopNumber] = event.acceleration.x;
-	accelHistory_Y[sampleLoopNumber] = event.acceleration.y;
-	accelHistory_Z[sampleLoopNumber] = event.acceleration.z;
+	//Due to the orientation of the sensor pack...
+	accelHistory_ForwardBack[sampleLoopNumber] = event.acceleration.y;
+	accelHistory_UpDown[sampleLoopNumber] = event.acceleration.x;
+	accelHistory_LeftRight[sampleLoopNumber] = event.acceleration.z;
 
-	this_X = accelHistory_X[sampleLoopNumber];
-	this_Y = accelHistory_Y[sampleLoopNumber];
-	this_Z = accelHistory_Z[sampleLoopNumber];
+	this_ForwardBack = accelHistory_ForwardBack[sampleLoopNumber];
+	this_UpDown = accelHistory_UpDown[sampleLoopNumber];
+	this_LeftRight = accelHistory_LeftRight[sampleLoopNumber];
 
-	int16_t avg_X = 0;
-	int16_t avg_Y = 0;
-	int16_t avg_Z = 0;
+	float avg_ForwardBack = 0;
+	float avg_UpDown = 0;
+	float avg_LeftRight = 0;
 
 	for (size_t i = 0; i < ACCELL_SAMPLE_COUNT; i++)
 	{
 		if (i != sampleLoopNumber) {
-			avg_X += accelHistory_X[i];
-			avg_Y += accelHistory_Y[i];
-			avg_Z += accelHistory_Z[i];
+			avg_ForwardBack += accelHistory_ForwardBack[i];
+			avg_UpDown += accelHistory_UpDown[i];
+			avg_LeftRight += accelHistory_LeftRight[i];
 		}
 	}
 
 	//don't count the current one
-	avg_X = avg_X / (ACCELL_SAMPLE_COUNT - 1);
-	avg_Y = avg_Y / (ACCELL_SAMPLE_COUNT - 1);
-	avg_Z = avg_Z / (ACCELL_SAMPLE_COUNT - 1);
+	avg_ForwardBack = avg_ForwardBack / (ACCELL_SAMPLE_COUNT - 1);
+	avg_UpDown = avg_UpDown / (ACCELL_SAMPLE_COUNT - 1);
+	avg_LeftRight = avg_LeftRight / (ACCELL_SAMPLE_COUNT - 1);
 
-	if (this_X != 0 && abs(this_X) > abs(avg_X) || abs(this_Y) > abs(avg_Y))
+	bool bChanged = false;
+
+	float energy = 0;
+	if (this_ForwardBack != 0 && abs(this_ForwardBack) > abs(avg_ForwardBack))
+	{
+		energy += abs(this_ForwardBack);
+		//colorWipeDot(dot.Color(255, 255, 0), 500); // Yellow
+		bChanged = true;
+	}
+	if (this_UpDown != 0 && abs(this_UpDown) > abs(avg_UpDown))
+	{
+		energy += abs(this_UpDown);
+		bChanged = true;
+	}
+
+	if (this_LeftRight != 0 && abs(this_LeftRight) > abs(avg_LeftRight))
+	{
+		energy += abs(this_LeftRight);
+	}
+
+	if (bChanged == true)
 	{
 		//kick it
-		//THIS CALL CRASHES THE FLORA!!!!!
-		//double rad = atan2(this_Y * 100, this_X * 100);
+		float rad = atan2(this_LeftRight * 100, avg_ForwardBack * 100);
+		float deg = rad * (180 / PI);
+		float absDeg = abs(deg);
+		float absLed = absDeg / 2.25;
 
-		//double deg = rad * (180 / PI);
+		g_proposedOriginLED = (int)absLed;
 
-		//360 desgrees with 80 LEDs is 2.25 degrees per LED
-		//originLED = abs(deg) / 2.25;
+		g_energyFactor = ((energy - 10) / 10.0) * 100;
+		if (g_energyFactor > 100)
+			g_energyFactor = 100;
+		if (g_energyFactor < 1)
+			g_energyFactor = 0;
 
-		//set the 'energy' here, too.
 	}
 
-	////Be sure to loop the counter around to zero again...
+	//Be sure to loop the counter around to zero again...
 	sampleLoopNumber = (sampleLoopNumber + 1) % ACCELL_SAMPLE_COUNT;
+
 }
 
-//===================================================================================================================================================
-// readPotentiometer() : Take a potentiometer reading. This value will be used to control various LED animations, and to choose the animation sequence to display.
-//===================================================================================================================================================
-void readPotentiometer() {
-	//Take a reading from the potentiometer and convert the value into a number between 0 and 255
-	//potVal = map(analogRead(potPin), 0, 1023, 0, 255);
+//=================================================
+void SetOriginAndMode(int g_proposedOriginLED, int g_energyFactor) {
 
-	potVal = 155;
+	static int idleLoopCount = 0;
 
-	// If the potentiometer reading is equal to zero, then move to the next effect in the list.
-	if (potVal == 0) {
-		if (prevPotVal > 0) {   // This allows us to switch effects only when the potentiometer reading has changed to zero (from a positive number). Multiple zero readings will be ignored.
-			prevPotVal = 0;   // Set the prev pot value to zero in order to ignore replicate zero readings.
-			effect++;         // Go to the next effect.
-			if (effect > 4) {
-				effect = 0;       // Go back to the first effect after the fifth effect.
-			}
+	originLED = g_proposedOriginLED;
+
+	if (g_energyFactor > 90) {
+		//and sparkle!
+		idleLoopCount = 0;
+		rainbowSpin(1000, 100, 200);
+	}
+	if (g_energyFactor < 20) {
+		idleLoopCount++;
+		//jump to it
+		//and sparkle!
+		if (idleLoopCount > 100) 
+		{
+			idleLoopCount = 0;
+
+			rainbowSpin(10, 40, 200);
 		}
 	}
-	prevPotVal = potVal;    // Keep track of the previous potentiometer reading
+	else {
+		idleLoopCount = 0;
+		mirrorStreamWithHueControl();
+
+		//Here's some other unused stuff to manage the direction, etc.
+		//int ledDiff = 0;
+		//int energySteps = 0;
+		//bool diffIsForward = false;
+		//if (g_proposedOriginLED > originLED) {
+		//	ledDiff = (g_proposedOriginLED - originLED);
+		//	if (ledDiff > NUM_LEDS / 2) {
+		//		//leaving this here in case we want to do other backwards stuff.
+		//		diffIsForward = false;
+		//	}
+		//	else {
+		//		diffIsForward = true;
+		//	}
+		//}
+		//if (g_proposedOriginLED < originLED) {
+		//	ledDiff = (originLED - g_proposedOriginLED);
+		//	if (ledDiff > NUM_LEDS / 2) {
+		//		//go forwards
+		//		diffIsForward = true;
+		//	}
+		//	else {
+		//		//leaving this here in case we want to do other backwards stuff.
+		//		diffIsForward = false;
+		//	}
+		//}
+		//now split the diff based on energy
+	}
+}
+//=================================================
+
+void rainbowSpin(uint8_t speedValue, int breakoutEnergyThreshold, int maxLoopCount)
+{
+	currentPalette = RainbowStripeColors_p;
+	currentBlending = LINEARBLEND;
+	FastLED.setBrightness(120);
+
+	int iLoopCounter = 0;
+	while (g_energyFactor < breakoutEnergyThreshold && iLoopCounter < maxLoopCount)
+	{
+
+		UpdateMotionStats();
+
+		static uint8_t startIndex = 0;
+
+		startIndex = startIndex - 1; /* motion speed */
+
+		FillLEDsFromPaletteColors(startIndex);
+		FastLED.show();
+		FastLED.delay(1000 / speedValue);
+		iLoopCounter++;
+	}
+}
+
+void FillLEDsFromPaletteColors(uint8_t colorIndex)
+{
+
+	for (int i = 0; i < NUM_LEDS; i++) {
+		leds[i] = ColorFromPalette(currentPalette, colorIndex, rainbowBrightness, currentBlending);
+		colorIndex += 3;
+	}
 }
 
 
@@ -249,7 +347,12 @@ void adjustSpeed() {
 
 	//LEDAccel = constrain(map(analogRead(yPin), 230, 640, maxLEDSpeed, -maxLEDSpeed), -maxLEDSpeed, maxLEDSpeed);
 	//LEDAccel = constrain(map(analogRead(lsm.accelData.x), 230, 640, maxLEDSpeed, -maxLEDSpeed), -maxLEDSpeed, maxLEDSpeed);
-	LEDAccel = 0;
+	LEDAccel = constrain(map(g_energyFactor, 5, 100, maxLEDSpeed, -maxLEDSpeed), -maxLEDSpeed, maxLEDSpeed);
+	//LEDAccel = 0;
+
+	//start at blue, add the energy factor, avoid going past 255
+	//g_hueVal = (0 + (g_energyFactor / 100 * 255)) % 255;
+	g_hueVal = (g_energyFactor % 255);
 
 
 	// If the constSpeed variable is "true", then make sure that the speed of the animation is constant by modifying the LEDSpeed and LEDAccel variables.
@@ -283,6 +386,48 @@ void adjustSpeed() {
 }
 
 
+//====================================================
+// FOR ONBOARD NEOPIXEL
+//====================================================
+// Fill the dots one after the other with a color
+void colorWipeDot(uint32_t c, uint8_t wait) {
+	for (uint16_t i = 0; i < dot.numPixels(); i++) {
+		dot.setPixelColor(i, c);
+		dot.show();
+		delay(wait);
+	}
+}
+
+// Slightly different, this makes the rainbow equally distributed throughout
+void rainbowCycleDot(uint8_t wait) {
+	uint16_t i, j;
+
+	for (j = 0; j < 256 * 5; j++) { // 5 cycles of all colors on wheel
+		for (i = 0; i < dot.numPixels(); i++) {
+			dot.setPixelColor(i, WheelDot(((i * 256 / dot.numPixels()) + j) & 255));
+		}
+		dot.show();
+		delay(wait);
+	}
+}
+// Input a value 0 to 255 to get a color value.
+// The colours are a transition r - g - b - back to r.
+uint32_t WheelDot(byte WheelPos) {
+	WheelPos = 255 - WheelPos;
+	if (WheelPos < 85) {
+		return dot.Color(255 - WheelPos * 3, 0, WheelPos * 3);
+	}
+	else if (WheelPos < 170) {
+		WheelPos -= 85;
+		return dot.Color(0, WheelPos * 3, 255 - WheelPos * 3);
+	}
+	else {
+		WheelPos -= 170;
+		return dot.Color(WheelPos * 3, 255 - WheelPos * 3, 0);
+	}
+}
+
+
 //===================================================================================================================================================
 // constrainLEDs() : This ensures that the LED animation sequence remains within the boundaries of the various arrays (and the LED strip)
 //                   and it also creates a "bouncing" effect at both ends of the LED strip.
@@ -299,42 +444,11 @@ void LoopLEDs() {
 }
 
 
-
-//===================================================================================================================================================
-// cylonWithHueControl() :  This is the 1st LED effect. The cylon colour is controlled by the potentiometer. The speed is constant.
-//===================================================================================================================================================
-void cylonWithHueControl() {
-	constSpeed = true;                                  // Make the LED animation speed constant
-	showLED(LEDPosition, potVal, 255, intensity);       // Illuminate the LED
-	fadeLEDs(8);                                        // Fade LEDs by a value of 8. Higher numbers will create a shorter tail.
-	setDelay(LEDSpeed);                                 // The LEDSpeed is constant, so the delay is constant
-}
-
-//===================================================================================================================================================
-// mirrorCylonWithHueControl() :  
-//===================================================================================================================================================
-void mirrorCylonWithHueControl() {
-	constSpeed = true;                                  // Make the LED animation speed constant
-
-	//split and mirror off of origin
-	//origin is the 'startng' LED in a 365 degree ring
-
-	//hard coded for now
-	int originLED = 20;
-
-	////offest of origin of current LED
-	int mirrorLED = (originLED + NUM_LEDS - LEDPosition) % (NUM_LEDS);
-	showLED(LEDPosition, potVal, 255, intensity);       // Illuminate the LED
-	showLED(mirrorLED, potVal, 255, intensity);       // Illuminate the LED
-	fadeLEDs(24);                                        // Fade LEDs by a value of 8. Higher numbers will create a shorter tail.
-	setDelay(LEDSpeed);                                 // The LEDSpeed is constant, so the delay is constant
-}
-
 //===================================================================================================================================================
 // mirrorStreamWithHueControl() :  
 //===================================================================================================================================================
 void mirrorStreamWithHueControl() {
-	constSpeed = true;                                  // Make the LED animation speed constant
+	constSpeed = false;                                  // Make the LED animation speed constant
 
 	//split and mirror off of origin
 	//origin is the 'startng' LED in a 365 degree ring
@@ -365,110 +479,25 @@ void mirrorStreamWithHueControl() {
 	else {
 		mirrorLED = (originLED + diff + NUM_LEDS) % (NUM_LEDS);
 
-		//The long way to do it - might actually be faster, but not as cool maybe.
-		//mirrorLED = originLED + diff;
-		//if (mirrorLED > NUM_LEDS) {
-		//	//loop around
-		//	mirrorLED = mirrorLED - NUM_LEDS;
-		//}
-		//else if (mirrorLED < 0) {
-		//	//loop around - add the negative to SUBTRACT it.  Math.
-		//	mirrorLED = NUM_LEDS + mirrorLED;
-		//}
-
 		//as the leds approach the tail, dim them out
 		if (diff < 0) diff = diff * -1;
 		if (diff != 0)
 			percentFromEnd = float((NUM_LEDS / 2) - diff) / float(NUM_LEDS / 2);
 	}
 
-	int newIntensity = intensity;
+	int new_intensity = g_streamIntensity;
 	if (percentFromEnd >= 0) {
-		newIntensity = intensity * percentFromEnd;
-		if (newIntensity < 0) newIntensity = 0;
+		new_intensity = g_streamIntensity * percentFromEnd;
+		if (new_intensity < 0) new_intensity = 0;
 	}
 
-	showLED(LEDPosition, potVal, 255, newIntensity);    // Illuminate the LED
-	showLED(mirrorLED, potVal, 255, newIntensity);      // Illuminate the LED
+	showLED(LEDPosition, g_hueVal, 255, new_intensity);    // Illuminate the LED
+	showLED(mirrorLED, g_hueVal, 255, new_intensity);      // Illuminate the LED
 
-	fadeLEDs(24);                                       // Fade LEDs by a value of 8. Higher numbers will create a shorter tail.
+	fadeLEDs(12);                                       // Fade LEDs by a value of 8. Higher numbers will create a shorter tail.
 	setDelay(LEDSpeed);                                 // The LEDSpeed is constant, so the delay is constant
 }
 
-
-
-
-//===================================================================================================================================================
-// cylonWithBrightnessControl() : This is the 2nd LED effect. The cylon colour is red (hue=0), and the brightness is controlled by the potentiometer
-//===================================================================================================================================================
-void cylonWithBrightnessControl() {
-	constSpeed = true;                                  // Make speed constant
-	showLED(LEDPosition, 0, 255, potVal);               // Brightness is controlled by potentiometer.
-	fadeLEDs(16);                                       // Fade LEDs by a value of 16
-	setDelay(LEDSpeed);                                 // The LEDSpeed is constant, so the delay is constant
-}
-
-
-//===================================================================================================================================================
-// cometEffect() :  This is the 3rd LED effect. The random brightness of the trailing LEDs produces an interesting comet-like effect.
-//===================================================================================================================================================
-void cometEffect() {
-	constSpeed = false;                                  // The speed will be controlled by the slope of the accelerometer (y-Axis)
-	showLED(LEDPosition, potVal, 255, intensity);        // Hue will change with potentiometer.
-
-	//The following lines create the comet effect 
-	bright = random(50, 100);                            // Randomly select a brightness between 50 and 100
-	leds[LEDPosition] = CHSV((potVal + 40), 255, bright);   // The trailing LEDs will have a different hue to the leading LED, and will have a random brightness
-	fadeLEDs(8);                                         // This will affect the length of the Trailing LEDs
-	setDelay(LEDSpeed);                                  // The LEDSpeed will be affected by the slope of the Accelerometer's y-Axis
-}
-
-
-//===================================================================================================================================================
-// fireStarter() : This is the 4th LED effect. It starts off looking like a ball of fire, leaving a trail of little fires. But as you
-//                 turn the potentiometer, it becomes more like a shooting star with a rainbow-sparkle trail.
-//===================================================================================================================================================
-void fireStarter() {
-	constSpeed = false;                                  // The speed will be controlled by the slope of the accelerometer (y-Axis)
-	ledh[LEDPosition] = potVal;                          // Hue is controlled by potentiometer
-	showLED(LEDPosition, ledh[LEDPosition], 255, intensity);
-
-	//The following lines create the fire starter effect
-	bright = random(50, 100);                            // Randomly select a brightness between 50 and 100
-	ledb[LEDPosition] = bright;                          // Assign this random brightness value to the trailing LEDs
-	sparkle(potVal / 5);                                   // Call the sparkle routine to create that sparkling effect. The potentiometer controls the difference in hue from LED to LED.
-	fadeLEDs(1);                                         // A low number creates a longer tail
-	setDelay(LEDSpeed);                                  // The LEDSpeed will be affected by the slope of the Accelerometer's y-Axis
-}
-
-
-//===================================================================================================================================================
-// levelSense() : This is the 5th and final LED effect. The accelerometer is used in conjunction with the LED strip to create a digital "Spirit" Level.
-//                You can use the illuminated LEDs to identify the angle of the LED strip
-//===================================================================================================================================================
-void levelSense() {
-	constSpeed = true;
-	LEDPosition = constrain(map(analogRead(yPin), 230, 640, 1, NUM_LEDS - 1), 0, NUM_LEDS - 1);
-
-	//Jitter correction: this will reduce the amount of jitter caused by the accelerometer reading variability
-	if (abs(LEDPosition - oldPos) < 2) {
-		LEDPosition = oldPos;
-	}
-
-	//The following lines of code will ensure the colours remain within the red to green range, with green in the middle and red at the ends.
-	hue = map(LEDPosition, 0, NUM_LEDS - 1, 0, 200);
-	if (hue > 100) {
-		hue = 200 - hue;
-	}
-
-	//Illuminate 2 LEDs next to each other
-	showLED(LEDPosition, hue, 255, intensity);
-	showLED(LEDPosition - 1, hue, 255, intensity);
-
-	//If the position moves, then fade the old LED positions by a factor of 25 (high numbers mean shorter tail)
-	fadeLEDs(25);
-	oldPos = LEDPosition;
-}
 
 
 //===================================================================================================================================================
@@ -502,11 +531,11 @@ void setDelay(int LSpeed) {
 
 //===================================================================================================================================================
 // sparkle() : is used by the fireStarter routine to create a sparkling/fire-like effect
-//             Each LED hue and brightness is monitored and modified using arrays  (ledh[]  and ledb[])
+//             Each LED g_hue and brightness is monitored and modified using arrays  (ledh[]  and ledb[])
 //===================================================================================================================================================
 void sparkle(byte hDiff) {
 	for (int i = 0; i < NUM_LEDS; i++) {
-		ledh[i] = ledh[i] + hDiff;                // hDiff controls the extent to which the hue changes along the trailing LEDs
+		ledh[i] = ledh[i] + hDiff;                // hDiff controls the extent to which the g_hue changes along the trailing LEDs
 
 		// This will prevent "negative" brightness.
 		if (ledb[i] < 3) {
@@ -528,4 +557,3 @@ void sparkle(byte hDiff) {
 		leds[i] = CHSV(ledh[i], 255, ledb[i]);
 	}
 }
-
